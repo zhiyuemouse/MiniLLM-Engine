@@ -1,0 +1,10 @@
+/LEARNING.md
+
+/.venv/
+/models/
+/downloads/
+/upstream/
+/test.md
+__pycache__/
+*.py[cod]
+.env
