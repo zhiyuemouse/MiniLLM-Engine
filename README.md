@@ -42,3 +42,9 @@ M0/M1 的模型脚本从项目根目录读取本地 `models/Qwen3-0.6B`，并使
 策略默认关闭。启用后，连续 prefill 达到设定轮数且有 running 请求可追加时，调度器优先尝试 decode。对于 A、B、C 分别在 `0 / 10 / 50 ms` 到达的三个短请求，正反两种运行顺序下，A/B 的首次 token 间隔均缩短，第二次间隔约翻倍，C 的首 token 延迟上升。两批请求总延迟中位数均下降，降幅分别为 5.83%–6.64% 和 1.24%–1.76%。每种策略在每批记录五轮，结论限于该负载。
 
 调度改动基于 GeeeekExplorer/nano-vllm 的 `bb823b3e06983d71485a8e1f23715ebd87d98ef8` 开发，保留 [上游 MIT 许可证](https://github.com/zhiyuemouse/nano-vllm/blob/main/LICENSE)。固定时间实验的源码和数据保存在 fork 的提交 `adb66ac`。
+
+## 算子实验与引擎集成
+
+配套仓库包含 CUDA RowSum、Softmax、GEMM/GEMV 和 Triton RMSNorm 的独立实现、正确性校验与微基准。[MiniLLM-Kernels](https://github.com/zhiyuemouse/MiniLLM-Kernels)
+
+在 Nano-vLLM 中，我们把 Triton fused residual add + RMSNorm 接入 Qwen3 的 post-attention 路径，验证了 prefill、跨 KV block decode 和 CUDA Graph replay。独立 BF16 算子在所测的 5 种形状上均有加速。对于 Qwen3-0.6B 的 BF16 小 batch 工作负载，整模型 eager decode 未观察到收益，CUDA Graph decode 的 A/B 差异约为 0.1–0.3%。Triton 接入保留为默认关闭的实验开关。[Nano-vLLM 集成分支](https://github.com/zhiyuemouse/nano-vllm/tree/triton-post-attn-rmsnorm)
