@@ -49,7 +49,7 @@ M0/M1 的模型脚本从项目根目录读取本地 `models/Qwen3-0.6B`，并使
 
 ### 接入与正确性
 
-在 Nano-vLLM fork 中，将 Triton fused residual add + RMSNorm 接入 Qwen3 decoder 的 post-attention 层。启用实验开关后，满足形状、设备、BF16 dtype 和连续布局检查的输入走 Triton 路径，返回归一化输出和更新后的 residual。其他输入走原有 RMSNorm 路径。[集成源码与验证脚本](https://github.com/zhiyuemouse/nano-vllm/tree/2a473e9) · [Triton RMSNorm 实验说明](https://github.com/zhiyuemouse/nano-vllm/blob/main/experiments/README.md#triton-post-attention-rmsnorm)
+在 Nano-vLLM fork 中，将 Triton fused residual add + RMSNorm 接入 Qwen3 decoder 的 post-attention 层。启用实验开关后，满足形状、设备、BF16 dtype 和连续布局检查的输入走 Triton 路径，返回归一化输出和更新后的 residual。其他输入走原有 RMSNorm 路径。[集成源码与验证脚本](https://github.com/zhiyuemouse/nano-vllm/tree/main) · [Triton RMSNorm 实验说明](https://github.com/zhiyuemouse/nano-vllm/blob/main/experiments/README.md#triton-post-attention-rmsnorm)
 
 - **算子对照**：按 Nano-vLLM 编译路径观测到的 BF16 舍入顺序实现 Triton 版本。固定输入检查归一化输出误差，并单独检查更新后的 residual。
 - **整模型对照**：两组使用相同 prompt，并用 baseline 的贪心 token 推进 decode。比较采样前的 logits 和 top-1。验证覆盖完整 prefill、连续 KV-cache decode，以及 scheduler 分配第二个 KV block 时的 `256 → 257` 边界。所测模型用例的 top-1 一致。
