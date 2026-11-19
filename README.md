@@ -47,4 +47,39 @@ M0/M1 的模型脚本从项目根目录读取本地 `models/Qwen3-0.6B`，并使
 
 配套仓库包含 CUDA RowSum、Softmax、GEMM/GEMV 和 Triton RMSNorm 的独立实现、正确性校验与微基准。[MiniLLM-Kernels](https://github.com/zhiyuemouse/MiniLLM-Kernels)
 
-在 Nano-vLLM 中，我们把 Triton fused residual add + RMSNorm 接入 Qwen3 的 post-attention 路径，验证了 prefill、跨 KV block decode 和 CUDA Graph replay。独立 BF16 算子在所测的 5 种形状上均有加速。对于 Qwen3-0.6B 的 BF16 小 batch 工作负载，整模型 eager decode 未观察到收益，CUDA Graph decode 的 A/B 差异约为 0.1–0.3%。Triton 接入保留为默认关闭的实验开关。[Nano-vLLM 集成分支](https://github.com/zhiyuemouse/nano-vllm/tree/triton-post-attn-rmsnorm)
+### 接入与正确性
+
+在 Nano-vLLM fork 中，将 Triton fused residual add + RMSNorm 接入 Qwen3 decoder 的 post-attention 层。启用实验开关后，满足形状、设备、BF16 dtype 和连续布局检查的输入走 Triton 路径，返回归一化输出和更新后的 residual。其他输入走原有 RMSNorm 路径。[集成源码与验证脚本](https://github.com/zhiyuemouse/nano-vllm/tree/2a473e9)
+
+- **算子对照**：按 Nano-vLLM 编译路径观测到的 BF16 舍入顺序实现 Triton 版本。固定输入检查归一化输出误差，并单独检查更新后的 residual。
+- **整模型对照**：两组使用相同 prompt，并用 baseline 的贪心 token 推进 decode。比较采样前的 logits 和 top-1。验证覆盖完整 prefill、连续 KV-cache decode，以及 scheduler 分配第二个 KV block 时的 `256 → 257` 边界。所测模型用例的 top-1 一致。
+- **CUDA Graph**：验证跨块 decode 的实际 replay。对 batch size 1 和 2，正式 capture 均命中 28/28 层 Triton post-attention RMSNorm。
+
+### 性能结果
+
+整模型实验使用 Qwen3-0.6B、BF16 和三个短请求。A/B 固定调度策略，按相同调度步提交请求。整模型差值为 Triton 中位数减去 baseline 中位数。
+
+| 测量范围 | 结果 |
+|---|---|
+| 独立算子 | 在 `1/2/14/17/18 × 1024` 五种形状上，配对差中位数均为负，节省约 9–27 µs/次 |
+| Eager decode forward | batch size 1 和 2 在正反两种运行顺序下均出现中位数上升，差值约 +0.36 至 +1.23 ms |
+| CUDA Graph decode forward | 两种 batch size、两种运行顺序的差值约 +10 至 +22 µs（0.1–0.3%），两组基本持平 |
+
+这组工作负载下，独立算子的收益未转化为可观察的整模型 decode 收益，因此 Triton 路径默认关闭。
+
+### 复现 CUDA Graph A/B
+
+在准备好模型和 GPU 环境的 Nano-vLLM fork 根目录执行。两个命令使用相同的 `step` 到达模式和调度配置。脚本预热 2 轮、测量 5 轮，并在 JSON 中保存按阶段和行数标记的 forward 样本。
+
+```bash
+common=(--model-path ../../models/Qwen3-0.6B --max-consecutive-prefills 0
+        --arrival-mode step --cuda-graph --measure-forward)
+
+python experiments/benchmark_scheduler_policy.py "${common[@]}" \
+  --output experiments/output/rmsnorm_graph_baseline.json
+python experiments/benchmark_scheduler_policy.py "${common[@]}" \
+  --use-triton-post-attn-norm \
+  --output experiments/output/rmsnorm_graph_triton.json
+```
+
+反序复测时先跑 Triton，再跑 baseline，并使用不同的输出文件。若要对照 eager 路径，两组都去掉 `--cuda-graph`。
